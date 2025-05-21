@@ -1,366 +1,363 @@
 package mpt
 
 import (
-	"encoding/json"
+	"blockchain/common"
 	"fmt"
-	"strings"
 )
 
-// Node 表示 MPT 树中的节点
-type Node struct {
-	Type     string           `json:"type"`     // 节点类型：branch, extension, leaf
-	Value    []byte           `json:"value"`    // 节点值
-	Children map[string]*Node `json:"children"` // 分支节点的子节点
-	Path     []byte           `json:"path"`     // 扩展节点或叶子节点的路径
-	IsLeaf   bool             `json:"isLeaf"`   // 是否是叶子节点
-}
-
-// MPT 表示 Merkle Patricia Trie
+// MPT represents a Merkle Patricia Trie
 type MPT struct {
-	Root *Node
+	Root Node
 	DB   *DB
 }
 
-// NewMPT 创建一个新的 MPT
+// NewMPT creates a new MPT instance
 func NewMPT(db *DB) *MPT {
-	mpt := &MPT{
-		Root: &Node{
-			Type:     "branch",
-			Children: make(map[string]*Node),
-		},
-		DB: db,
-	}
-
-	// 尝试从数据库加载已存在的树结构
-	data, err := db.Get([]byte("mpt_root"))
-	if err == nil && len(data) > 0 {
-		var root Node
-		if err := json.Unmarshal(data, &root); err == nil {
-			mpt.Root = &root
-			fmt.Printf("从数据库加载 MPT 成功\n")
-		} else {
-			fmt.Printf("从数据库加载 MPT 失败: %v\n", err)
-		}
-	} else {
-		fmt.Printf("数据库中没有找到 MPT 数据\n")
-	}
-	return mpt
-}
-
-// Put 向 MPT 中插入键值对
-func (mpt *MPT) Put(key, value []byte) error {
-	fmt.Printf("[PUT] 插入键: %s, 值: %s\n", string(key), string(value))
-	// 将 key 转换为十六进制字符串
-	keyHex := fmt.Sprintf("%x", key)
-	mpt.Root = mpt.put(mpt.Root, keyHex, value)
-	return mpt.saveToDB()
-}
-
-// put 递归插入节点
-func (mpt *MPT) put(node *Node, key string, value []byte) *Node {
-	if node == nil {
-		fmt.Printf("[PUT] 新建 leaf 节点, key: %s\n", key)
-		// 创建新的叶子节点
-		return &Node{
-			Type:   "leaf",
-			Value:  value,
-			Path:   []byte(key),
-			IsLeaf: true,
-		}
-	}
-
-	switch node.Type {
-	case "branch":
-		if key == "" {
-			// 如果 key 为空，更新当前分支节点的值
-			node.Value = value
-			return node
-		}
-		// 获取第一个字符作为子节点索引
-		index := key[:1]
-		if node.Children == nil {
-			node.Children = make(map[string]*Node)
-		}
-		if node.Children[index] == nil {
-			fmt.Printf("[PUT] 新建 branch 子节点, index: %s\n", index)
-			node.Children[index] = &Node{Type: "branch", Children: make(map[string]*Node)}
-		}
-		node.Children[index] = mpt.put(node.Children[index], key[1:], value)
-		return node
-
-	case "leaf", "extension":
-		// 找到共同前缀
-		commonPrefix := findCommonPrefix(string(node.Path), key)
-		if commonPrefix == "" {
-			// 没有共同前缀，创建新的分支节点
-			branch := &Node{
-				Type:     "branch",
-				Children: make(map[string]*Node),
-			}
-			// 将当前节点和新的叶子节点添加到分支节点
-			if len(node.Path) > 0 {
-				branch.Children[string(node.Path[0])] = &Node{
-					Type:     node.Type,
-					Value:    node.Value,
-					Path:     node.Path[1:],
-					IsLeaf:   node.IsLeaf,
-					Children: node.Children,
-				}
-			}
-			if len(key) > 0 {
-				branch.Children[key[:1]] = &Node{
-					Type:   "leaf",
-					Value:  value,
-					Path:   []byte(key[1:]),
-					IsLeaf: true,
-				}
-			}
-			return branch
-		}
-
-		// 有共同前缀，创建扩展节点
-		extension := &Node{
-			Type:     "extension",
-			Path:     []byte(commonPrefix),
-			Children: make(map[string]*Node),
-		}
-		// 创建新的分支节点
-		branch := &Node{
-			Type:     "branch",
-			Children: make(map[string]*Node),
-		}
-		// 将剩余部分添加到分支节点
-		if len(node.Path) > len(commonPrefix) {
-			branch.Children[string(node.Path[len(commonPrefix)])] = &Node{
-				Type:     node.Type,
-				Value:    node.Value,
-				Path:     node.Path[len(commonPrefix)+1:],
-				IsLeaf:   node.IsLeaf,
-				Children: node.Children,
-			}
-		}
-		if len(key) > len(commonPrefix) {
-			branch.Children[key[len(commonPrefix):len(commonPrefix)+1]] = &Node{
-				Type:   "leaf",
-				Value:  value,
-				Path:   []byte(key[len(commonPrefix)+1:]),
-				IsLeaf: true,
-			}
-		}
-		// 将分支节点作为扩展节点的子节点
-		extension.Children[""] = branch
-		return extension
-	}
-
-	fmt.Printf("[PUT] 未知类型节点: %+v\n", node)
-	return node
-}
-
-// Get 从 MPT 中获取值
-func (mpt *MPT) Get(key []byte) ([]byte, error) {
-	// 将 key 转换为十六进制字符串
-	keyHex := fmt.Sprintf("%x", key)
-	fmt.Printf("[GET] 查询键: %s (hex: %s)\n", string(key), keyHex)
-	return mpt.get(mpt.Root, keyHex)
-}
-
-// get 递归获取值
-func (mpt *MPT) get(node *Node, key string) ([]byte, error) {
-	if node == nil {
-		fmt.Printf("[GET] node == nil\n")
-		return nil, fmt.Errorf("key not found")
-	}
-	fmt.Printf("[GET] 当前节点类型: %s, key: %s, node: %+v\n", node.Type, key, node)
-	switch node.Type {
-	case "branch":
-		if key == "" {
-			return node.Value, nil
-		}
-		if len(key) == 0 {
-			return nil, fmt.Errorf("key not found")
-		}
-		child := node.Children[key[:1]]
-		if child == nil {
-			fmt.Printf("[GET] branch 子节点不存在, index: %s\n", key[:1])
-			return nil, fmt.Errorf("key not found")
-		}
-		return mpt.get(child, key[1:])
-
-	case "leaf":
-		if string(node.Path) == key {
-			return node.Value, nil
-		}
-		fmt.Printf("[GET] leaf 路径不匹配, node.Path: %s, key: %s\n", string(node.Path), key)
-		return nil, fmt.Errorf("key not found")
-
-	case "extension":
-		if !hasPrefix(key, string(node.Path)) {
-			fmt.Printf("[GET] extension 路径不匹配, node.Path: %s, key: %s\n", string(node.Path), key)
-			return nil, fmt.Errorf("key not found")
-		}
-		// 修改：递归查询子节点，而不是当前节点
-		remainingKey := key[len(node.Path):]
-		// 获取子节点（分支节点）
-		child := node.Children[""]
-		if child == nil {
-			fmt.Printf("[GET] extension 子节点不存在\n")
-			return nil, fmt.Errorf("key not found")
-		}
-		return mpt.get(child, remainingKey)
-	}
-
-	fmt.Printf("[GET] invalid node type: %+v\n", node)
-	return nil, fmt.Errorf("invalid node type")
-}
-
-// Delete 从 MPT 中删除键值对
-func (mpt *MPT) Delete(key []byte) error {
-	keyHex := fmt.Sprintf("%x", key)
-	mpt.Root = mpt.delete(mpt.Root, keyHex)
-	return mpt.saveToDB()
-}
-
-// delete 递归删除节点
-func (mpt *MPT) delete(node *Node, key string) *Node {
-	if node == nil {
-		return nil
-	}
-
-	switch node.Type {
-	case "branch":
-		if key == "" {
-			node.Value = nil
-			// 如果分支节点没有子节点，返回 nil
-			if len(node.Children) == 0 {
-				return nil
-			}
-			return node
-		}
-		index := key[:1]
-		if child, ok := node.Children[index]; ok {
-			node.Children[index] = mpt.delete(child, key[1:])
-			// 如果子节点被删除，从 map 中移除
-			if node.Children[index] == nil {
-				delete(node.Children, index)
-			}
-		}
-		// 如果分支节点没有子节点且没有值，返回 nil
-		if len(node.Children) == 0 && node.Value == nil {
-			return nil
-		}
-		return node
-
-	case "leaf":
-		if string(node.Path) == key {
-			return nil
-		}
-		return node
-
-	case "extension":
-		if !hasPrefix(key, string(node.Path)) {
-			return node
-		}
-		remainingKey := key[len(node.Path):]
-		child := node.Children[""]
-		if child != nil {
-			node.Children[""] = mpt.delete(child, remainingKey)
-			// 如果子节点被删除，返回 nil
-			if node.Children[""] == nil {
-				return nil
-			}
-		}
-		return node
-	}
-
-	return node
-}
-
-// Has 检查键是否存在
-func (mpt *MPT) Has(key []byte) bool {
-	_, err := mpt.Get(key)
-	return err == nil
-}
-
-// GetAll 获取所有键值对
-func (mpt *MPT) GetAll() map[string][]byte {
-	result := make(map[string][]byte)
-	mpt.getAll(mpt.Root, "", result)
-	return result
-}
-
-// getAll 递归获取所有键值对
-func (mpt *MPT) getAll(node *Node, prefix string, result map[string][]byte) {
-	if node == nil {
-		return
-	}
-
-	switch node.Type {
-	case "branch":
-		if node.Value != nil {
-			result[prefix] = node.Value
-		}
-		for k, child := range node.Children {
-			mpt.getAll(child, prefix+k, result)
-		}
-
-	case "leaf":
-		if node.IsLeaf {
-			result[prefix+string(node.Path)] = node.Value
-		}
-
-	case "extension":
-		for k, child := range node.Children {
-			mpt.getAll(child, prefix+string(node.Path)+k, result)
-		}
+	return &MPT{
+		Root: nil,
+		DB:   db,
 	}
 }
 
-// PrintTree 打印树结构
-func (mpt *MPT) PrintTree() {
-	fmt.Println("MPT Tree Structure:")
-	mpt.printNode(mpt.Root, 0)
-}
-
-// printNode 递归打印节点
-func (mpt *MPT) printNode(node *Node, depth int) {
-	if node == nil {
-		return
-	}
-
-	indent := strings.Repeat("  ", depth)
-	fmt.Printf("%sType: %s\n", indent, node.Type)
-	if node.Value != nil {
-		fmt.Printf("%sValue: %s\n", indent, string(node.Value))
-	}
-	if node.Path != nil {
-		fmt.Printf("%sPath: %s\n", indent, string(node.Path))
-	}
-	fmt.Printf("%sIsLeaf: %v\n", indent, node.IsLeaf)
-
-	if node.Children != nil {
-		fmt.Printf("%sChildren:\n", indent)
-		for k, child := range node.Children {
-			fmt.Printf("%s  Key: %s\n", indent, k)
-			mpt.printNode(child, depth+2)
-		}
-	}
-}
-
-// saveToDB 将 MPT 保存到数据库
-func (mpt *MPT) saveToDB() error {
-	data, err := json.Marshal(mpt.Root)
+// LoadNode loads a node from the database by its hash
+func (m *MPT) LoadNode(hash common.Hash) (Node, error) {
+	// Get the node data from database
+	data, err := m.DB.Get(hash.Bytes())
 	if err != nil {
-		return fmt.Errorf("序列化 MPT 失败: %v", err)
+		return nil, fmt.Errorf("failed to load node: %v", err)
 	}
-	fmt.Printf("保存 MPT 到数据库，数据大小: %d 字节\n", len(data))
-	if err := mpt.DB.Put([]byte("mpt_root"), data); err != nil {
-		return fmt.Errorf("保存 MPT 到数据库失败: %v", err)
+	if data == nil {
+		return nil, fmt.Errorf("node not found: %x", hash)
 	}
-	return nil
+
+	// Deserialize the node
+	return deserializeNode(data)
 }
 
-// findCommonPrefix 找到两个字符串的共同前缀
-func findCommonPrefix(a, b string) string {
+// Put inserts or updates a key-value pair in the trie
+func (m *MPT) Put(key, value []byte) error {
+	// Convert key to nibbles (hex)
+	nibbles := keyToNibbles(key)
+
+	// If root is nil, create a new leaf node
+	if m.Root == nil {
+		var hash common.Hash
+		hash.NewHash(value)
+		m.Root = &LeafNode{
+			Key:      nibbles,
+			Value:    hash,
+			NodeType: LeafNodeType,
+		}
+		return m.saveNode(m.Root)
+	}
+
+	// Insert the key-value pair
+	newRoot, err := m.insert(m.Root, nibbles, value)
+	if err != nil {
+		return err
+	}
+	m.Root = newRoot
+	return m.saveNode(m.Root)
+}
+
+// Get retrieves the value for a given key
+func (m *MPT) Get(key []byte) ([]byte, error) {
+	if m.Root == nil {
+		return nil, fmt.Errorf("empty trie")
+	}
+
+	nibbles := keyToNibbles(key)
+	value, err := m.get(m.Root, nibbles)
+	if err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+// Delete removes a key-value pair from the trie
+func (m *MPT) Delete(key []byte) error {
+	if m.Root == nil {
+		return fmt.Errorf("empty trie")
+	}
+
+	nibbles := keyToNibbles(key)
+	newRoot, err := m.delete(m.Root, nibbles)
+	if err != nil {
+		return err
+	}
+	m.Root = newRoot
+	return m.saveNode(m.Root)
+}
+
+// insert recursively inserts a key-value pair into the trie
+func (m *MPT) insert(node Node, nibbles []byte, value []byte) (Node, error) {
+	switch n := node.(type) {
+	case *LeafNode:
+		// If this is a leaf node, we need to handle the collision
+		commonPrefix := findCommonPrefix(n.Key, nibbles)
+		if len(commonPrefix) == len(n.Key) && len(commonPrefix) == len(nibbles) {
+			// Same key, update value
+			var hash common.Hash
+			hash.NewHash(value)
+			n.Value = hash
+			return n, nil
+		}
+
+		// Create a new branch node
+		branch := &BranchNode{
+			Children: [16]Node{},
+			NodeType: BranchNodeType,
+		}
+
+		// Insert the existing leaf node
+		if len(n.Key) > len(commonPrefix) {
+			idx := n.Key[len(commonPrefix)]
+			branch.Children[idx] = &LeafNode{
+				Key:      n.Key[len(commonPrefix)+1:],
+				Value:    n.Value,
+				NodeType: LeafNodeType,
+			}
+		}
+
+		// Insert the new value
+		if len(nibbles) > len(commonPrefix) {
+			idx := nibbles[len(commonPrefix)]
+			var hash common.Hash
+			hash.NewHash(value)
+			branch.Children[idx] = &LeafNode{
+				Key:      nibbles[len(commonPrefix)+1:],
+				Value:    hash,
+				NodeType: LeafNodeType,
+			}
+		}
+
+		// If there's a common prefix, wrap the branch in an extension node
+		if len(commonPrefix) > 0 {
+			return &ExtensionNode{
+				Path:     commonPrefix,
+				Value:    branch.GetHash(),
+				NodeType: ExtensionNodeType,
+			}, nil
+		}
+
+		return branch, nil
+
+	case *ExtensionNode:
+		// If this is an extension node, we need to handle the path
+		commonPrefix := findCommonPrefix(n.Path, nibbles)
+		if len(commonPrefix) == len(n.Path) {
+			// The path matches, continue down the trie
+			child, err := m.LoadNode(n.Value)
+			if err != nil {
+				return nil, err
+			}
+			newChild, err := m.insert(child, nibbles[len(commonPrefix):], value)
+			if err != nil {
+				return nil, err
+			}
+			n.Value = newChild.GetHash()
+			return n, nil
+		}
+
+		// Create a new branch node
+		branch := &BranchNode{
+			Children: [16]Node{},
+			NodeType: BranchNodeType,
+		}
+
+		// Insert the existing extension node
+		if len(n.Path) > len(commonPrefix) {
+			idx := n.Path[len(commonPrefix)]
+			branch.Children[idx] = &ExtensionNode{
+				Path:     n.Path[len(commonPrefix)+1:],
+				Value:    n.Value,
+				NodeType: ExtensionNodeType,
+			}
+		}
+
+		// Insert the new value
+		if len(nibbles) > len(commonPrefix) {
+			idx := nibbles[len(commonPrefix)]
+			var hash common.Hash
+			hash.NewHash(value)
+			branch.Children[idx] = &LeafNode{
+				Key:      nibbles[len(commonPrefix)+1:],
+				Value:    hash,
+				NodeType: LeafNodeType,
+			}
+		}
+
+		// If there's a common prefix, wrap the branch in an extension node
+		if len(commonPrefix) > 0 {
+			return &ExtensionNode{
+				Path:     commonPrefix,
+				Value:    branch.GetHash(),
+				NodeType: ExtensionNodeType,
+			}, nil
+		}
+
+		return branch, nil
+
+	case *BranchNode:
+		// If this is a branch node, we need to handle the children
+		if len(nibbles) == 0 {
+			var hash common.Hash
+			hash.NewHash(value)
+			n.Value = hash
+			return n, nil
+		}
+
+		idx := nibbles[0]
+		child := n.Children[idx]
+		if child == nil {
+			// Create a new leaf node
+			var hash common.Hash
+			hash.NewHash(value)
+			n.Children[idx] = &LeafNode{
+				Key:      nibbles[1:],
+				Value:    hash,
+				NodeType: LeafNodeType,
+			}
+		} else {
+			// Insert into existing child
+			newChild, err := m.insert(child, nibbles[1:], value)
+			if err != nil {
+				return nil, err
+			}
+			n.Children[idx] = newChild
+		}
+		return n, nil
+
+	default:
+		return nil, fmt.Errorf("unknown node type")
+	}
+}
+
+// get recursively retrieves a value from the trie
+func (m *MPT) get(node Node, nibbles []byte) ([]byte, error) {
+	switch n := node.(type) {
+	case *LeafNode:
+		if len(nibbles) == 0 {
+			return n.Value.Bytes(), nil
+		}
+		return nil, fmt.Errorf("key not found")
+
+	case *ExtensionNode:
+		if !hasPrefix(nibbles, n.Path) {
+			return nil, fmt.Errorf("key not found")
+		}
+		child, err := m.LoadNode(n.Value)
+		if err != nil {
+			return nil, err
+		}
+		return m.get(child, nibbles[len(n.Path):])
+
+	case *BranchNode:
+		if len(nibbles) == 0 {
+			return n.Value.Bytes(), nil
+		}
+		idx := nibbles[0]
+		child := n.Children[idx]
+		if child == nil {
+			return nil, fmt.Errorf("key not found")
+		}
+		return m.get(child, nibbles[1:])
+
+	default:
+		return nil, fmt.Errorf("unknown node type")
+	}
+}
+
+// delete recursively removes a key-value pair from the trie
+func (m *MPT) delete(node Node, nibbles []byte) (Node, error) {
+	switch n := node.(type) {
+	case *LeafNode:
+		if len(nibbles) == 0 {
+			return nil, nil
+		}
+		return n, nil
+
+	case *ExtensionNode:
+		if !hasPrefix(nibbles, n.Path) {
+			return n, nil
+		}
+		child, err := m.LoadNode(n.Value)
+		if err != nil {
+			return nil, err
+		}
+		newChild, err := m.delete(child, nibbles[len(n.Path):])
+		if err != nil {
+			return nil, err
+		}
+		if newChild == nil {
+			return nil, nil
+		}
+		n.Value = newChild.GetHash()
+		return n, nil
+
+	case *BranchNode:
+		if len(nibbles) == 0 {
+			n.Value = common.Hash{}
+			return n, nil
+		}
+		idx := nibbles[0]
+		child := n.Children[idx]
+		if child == nil {
+			return n, nil
+		}
+		newChild, err := m.delete(child, nibbles[1:])
+		if err != nil {
+			return nil, err
+		}
+		if newChild == nil {
+			n.Children[idx] = nil
+			// Check if we can collapse this branch node
+			nonNilChildren := 0
+			var lastChild Node
+			for _, child := range n.Children {
+				if child != nil {
+					nonNilChildren++
+					lastChild = child
+				}
+			}
+			if nonNilChildren == 0 {
+				return nil, nil
+			}
+			if nonNilChildren == 1 && n.Value == (common.Hash{}) {
+				// We can collapse this branch node into an extension node
+				return lastChild, nil
+			}
+		} else {
+			n.Children[idx] = newChild
+		}
+		return n, nil
+
+	default:
+		return nil, fmt.Errorf("unknown node type")
+	}
+}
+
+// saveNode saves a node to the database
+func (m *MPT) saveNode(node Node) error {
+	data, err := node.Serialize()
+	if err != nil {
+		return err
+	}
+	return m.DB.Put(node.GetHash().Bytes(), data)
+}
+
+// keyToNibbles converts a byte slice to nibbles (hex)
+func keyToNibbles(key []byte) []byte {
+	nibbles := make([]byte, len(key)*2)
+	for i, b := range key {
+		nibbles[i*2] = b >> 4
+		nibbles[i*2+1] = b & 0x0f
+	}
+	return nibbles
+}
+
+// findCommonPrefix finds the common prefix of two byte slices
+func findCommonPrefix(a, b []byte) []byte {
 	i := 0
 	for i < len(a) && i < len(b) && a[i] == b[i] {
 		i++
@@ -368,7 +365,15 @@ func findCommonPrefix(a, b string) string {
 	return a[:i]
 }
 
-// hasPrefix 检查字符串是否以指定前缀开头
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+// hasPrefix checks if a byte slice has a given prefix
+func hasPrefix(s, prefix []byte) bool {
+	if len(s) < len(prefix) || len(prefix) == 0 {
+		return false
+	}
+	for i := 0; i < len(prefix); i++ {
+		if s[i] != prefix[i] {
+			return false
+		}
+	}
+	return true
 }
