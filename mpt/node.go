@@ -2,6 +2,7 @@ package mpt
 
 import (
 	"blockchain/common"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 )
@@ -26,21 +27,31 @@ type nodeFlag struct {
 }
 
 type FullNode struct {
-	Children [17]Node
-	Value    common.Hash
-	flags    nodeFlag
+	NodeType NodeType    `json:"nodeType"`
+	Children [17]Node    `json:"-"`
+	Value    common.Hash `json:"value"`
+	flags    nodeFlag    `json:"-"`
 }
 
 type LeafNode struct {
-	Key   []byte
-	Value []byte
-	flags nodeFlag
+	NodeType NodeType `json:"nodeType"`
+	Key      []byte   `json:"key"`
+	Value    []byte   `json:"value"`
+	flags    nodeFlag `json:"-"`
 }
 
 type ExtensionNode struct {
-	Path  []byte
-	Value common.Hash
-	flags nodeFlag
+	NodeType NodeType    `json:"nodeType"`
+	Path     []byte      `json:"path"`
+	Value    common.Hash `json:"value"`
+	flags    nodeFlag    `json:"-"`
+}
+
+// FullNode JSON序列化结构
+type fullNodeJSON struct {
+	NodeType NodeType `json:"nodeType"`
+	Children []string `json:"children"` // hash hex字符串
+	Value    string   `json:"value"`
 }
 
 func (n *FullNode) GetType() NodeType {
@@ -127,4 +138,54 @@ func deserializeNode(data []byte) (Node, error) {
 	default:
 		return nil, fmt.Errorf("unknown node type: %d", nodeType.NodeType)
 	}
+}
+
+func (n *FullNode) MarshalJSON() ([]byte, error) {
+	childrenHashes := make([]string, 17)
+	for i, child := range n.Children {
+		if child != nil {
+			// 先保存子节点
+			if _, err := child.Serialize(); err != nil {
+				return nil, err
+			}
+			childrenHashes[i] = hex.EncodeToString(child.GetHash().Bytes())
+		} else {
+			childrenHashes[i] = ""
+		}
+	}
+	return json.Marshal(&fullNodeJSON{
+		NodeType: n.NodeType,
+		Children: childrenHashes,
+		Value:    hex.EncodeToString(n.Value.Bytes()),
+	})
+}
+
+func (n *FullNode) UnmarshalJSON(data []byte) error {
+	var temp fullNodeJSON
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+	n.NodeType = temp.NodeType
+	for i, h := range temp.Children {
+		if h != "" {
+			bytes, err := hex.DecodeString(h)
+			if err != nil {
+				return err
+			}
+			var hash common.Hash
+			copy(hash[:], bytes)
+			// 这里只能存hash，实际访问时需通过DB加载
+			n.Children[i] = &ExtensionNode{NodeType: ExtensionNodeType, Path: nil, Value: hash}
+		} else {
+			n.Children[i] = nil
+		}
+	}
+	if temp.Value != "" {
+		bytes, err := hex.DecodeString(temp.Value)
+		if err != nil {
+			return err
+		}
+		copy(n.Value[:], bytes)
+	}
+	return nil
 }
