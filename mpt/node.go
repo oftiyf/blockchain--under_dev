@@ -6,98 +6,98 @@ import (
 	"fmt"
 )
 
+type Node interface {
+	GetType() NodeType
+	GetHash() common.Hash
+	Serialize() ([]byte, error)
+}
+
+type NodeType int
+
 const (
 	LeafNodeType      NodeType = iota
 	ExtensionNodeType          = 1
 	BranchNodeType             = 2
 )
 
-type Node interface {
-	GetHash() common.Hash
-	GetType() NodeType
-	Serialize() ([]byte, error)
+type nodeFlag struct {
+	hash  common.Hash
+	dirty bool
 }
 
-type NodeType int
+type FullNode struct {
+	Children [17]Node
+	Value    common.Hash
+	flags    nodeFlag
+}
+
 type LeafNode struct {
-	Value    common.Hash `json:"value"`
-	Key      []byte      `json:"key"`
-	NodeType NodeType    `json:"nodeType"`
+	Key   []byte
+	Value []byte
+	flags nodeFlag
+}
+
+type ExtensionNode struct {
+	Path  []byte
+	Value common.Hash
+	flags nodeFlag
+}
+
+func (n *FullNode) GetType() NodeType {
+	return BranchNodeType
 }
 
 func (n *LeafNode) GetType() NodeType {
 	return LeafNodeType
 }
 
-func (n *LeafNode) Serialize() ([]byte, error) {
-	data, err := json.Marshal(n)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
-func (n *LeafNode) GetHash() common.Hash {
-	data, _ := n.Serialize()
-	return sha3_256(data)
-}
-
-type ExtensionNode struct {
-	Path     []byte      `json:"path"`
-	Value    common.Hash `json:"value"`
-	NodeType NodeType    `json:"nodeType"`
-}
-
 func (n *ExtensionNode) GetType() NodeType {
 	return ExtensionNodeType
 }
 
+func (n *FullNode) Serialize() ([]byte, error) {
+	return json.Marshal(n)
+}
+
+func (n *LeafNode) Serialize() ([]byte, error) {
+	return json.Marshal(n)
+}
+
 func (n *ExtensionNode) Serialize() ([]byte, error) {
-	data, err := json.Marshal(n)
-	if err != nil {
-		return nil, err
+	return json.Marshal(n)
+}
+
+func (n *FullNode) GetHash() common.Hash {
+	if n.flags.hash != (common.Hash{}) {
+		return n.flags.hash
 	}
-	return data, nil
+	data, _ := n.Serialize()
+	hash := sha3_256(data)
+	n.flags.hash = hash
+	return hash
+}
+
+func (n *LeafNode) GetHash() common.Hash {
+	if n.flags.hash != (common.Hash{}) {
+		return n.flags.hash
+	}
+	data, _ := n.Serialize()
+	hash := sha3_256(data)
+	n.flags.hash = hash
+	return hash
 }
 
 func (n *ExtensionNode) GetHash() common.Hash {
-	data, _ := n.Serialize()
-	return sha3_256(data)
-}
-
-type BranchNode struct {
-	Children [16]*MPTNode `json:"children"`
-	Value    common.Hash  `json:"value"`
-	NodeType NodeType     `json:"nodeType"`
-}
-
-func (n *BranchNode) GetType() NodeType {
-	return BranchNodeType
-}
-
-func (n *BranchNode) Serialize() ([]byte, error) {
-	data, err := json.Marshal(n)
-	if err != nil {
-		return nil, err
+	if n.flags.hash != (common.Hash{}) {
+		return n.flags.hash
 	}
-	return data, nil
-}
-
-func (n *BranchNode) GetHash() common.Hash {
 	data, _ := n.Serialize()
-	return sha3_256(data)
-}
-
-func newBranchNode() *BranchNode {
-	return &BranchNode{
-		Children: [16]*MPTNode{},
-		Value:    common.Hash{},
-		NodeType: BranchNodeType,
-	}
+	hash := sha3_256(data)
+	n.flags.hash = hash
+	return hash
 }
 
 func deserializeNode(data []byte) (Node, error) {
-	// 首先解析出节点类型
 	var nodeType struct {
 		NodeType NodeType `json:"nodeType"`
 	}
@@ -105,7 +105,6 @@ func deserializeNode(data []byte) (Node, error) {
 		return nil, err
 	}
 
-	// 根据节点类型反序列化对应的节点
 	switch nodeType.NodeType {
 	case LeafNodeType:
 		var node LeafNode
@@ -120,7 +119,7 @@ func deserializeNode(data []byte) (Node, error) {
 		}
 		return &node, nil
 	case BranchNodeType:
-		var node BranchNode
+		var node FullNode
 		if err := json.Unmarshal(data, &node); err != nil {
 			return nil, err
 		}

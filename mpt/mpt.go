@@ -2,6 +2,7 @@ package mpt
 
 import (
 	"blockchain/common"
+	"bytes"
 	"fmt"
 )
 
@@ -38,16 +39,16 @@ func (m *MPT) LoadNode(hash common.Hash) (Node, error) {
 func (m *MPT) Put(key, value []byte) error {
 	// Convert key to nibbles (hex)
 	nibbles := keyToNibbles(key)
+	fmt.Printf("Put: key=%x, value=%x, nibbles=%x\n", key, value, nibbles)
 
 	// If root is nil, create a new leaf node
 	if m.Root == nil {
-		var hash common.Hash
-		hash.NewHash(value)
 		m.Root = &LeafNode{
-			Key:      nibbles,
-			Value:    hash,
-			NodeType: LeafNodeType,
+			Key:   nibbles,
+			Value: value,
+			flags: nodeFlag{},
 		}
+		fmt.Printf("Create root LeafNode: key=%x, value=%x\n", nibbles, value)
 		return m.saveNode(m.Root)
 	}
 
@@ -93,117 +94,144 @@ func (m *MPT) Delete(key []byte) error {
 func (m *MPT) insert(node Node, nibbles []byte, value []byte) (Node, error) {
 	switch n := node.(type) {
 	case *LeafNode:
-		// If this is a leaf node, we need to handle the collision
+		fmt.Printf("LeafNode insert: existing key=%x, new nibbles=%x, commonPrefix=%x\n", n.Key, nibbles, findCommonPrefix(n.Key, nibbles))
 		commonPrefix := findCommonPrefix(n.Key, nibbles)
-		if len(commonPrefix) == len(n.Key) && len(commonPrefix) == len(nibbles) {
-			// Same key, update value
-			var hash common.Hash
-			hash.NewHash(value)
-			n.Value = hash
+		if len(commonPrefix) == len(n.Key) {
+			// 现有节点的 key 是公共前缀，用新的 value 更新节点
+			n.Value = value
+			fmt.Printf("Update existing leaf: key=%x, new value=%x\n", n.Key, value)
+			if err := m.saveNode(n); err != nil {
+				return nil, err
+			}
 			return n, nil
 		}
-
-		// Create a new branch node
-		branch := &BranchNode{
-			Children: [16]Node{},
-			NodeType: BranchNodeType,
+		// 创建分支节点
+		branch := &FullNode{
+			Children: [17]Node{},
+			flags:    nodeFlag{},
 		}
-
-		// Insert the existing leaf node
+		// 将现有节点插入到分支节点
 		if len(n.Key) > len(commonPrefix) {
-			idx := n.Key[len(commonPrefix)]
-			branch.Children[idx] = &LeafNode{
-				Key:      n.Key[len(commonPrefix)+1:],
-				Value:    n.Value,
-				NodeType: LeafNodeType,
+			existingIdx := n.Key[len(commonPrefix)]
+			existingLeafKey := n.Key[len(commonPrefix)+1:]
+			existingLeaf := &LeafNode{Key: existingLeafKey, Value: n.Value}
+			fmt.Printf("Insert existing leaf: idx=%d, key=%x, value=%x\n", existingIdx, existingLeaf.Key, existingLeaf.Value)
+			if err := m.saveNode(existingLeaf); err != nil {
+				return nil, err
 			}
+			branch.Children[existingIdx] = existingLeaf
 		}
-
-		// Insert the new value
+		// 将新节点插入到分支节点
 		if len(nibbles) > len(commonPrefix) {
-			idx := nibbles[len(commonPrefix)]
-			var hash common.Hash
-			hash.NewHash(value)
-			branch.Children[idx] = &LeafNode{
-				Key:      nibbles[len(commonPrefix)+1:],
-				Value:    hash,
-				NodeType: LeafNodeType,
+			newIdx := nibbles[len(commonPrefix)]
+			newLeafKey := nibbles[len(commonPrefix)+1:]
+			newLeaf := &LeafNode{Key: newLeafKey, Value: value}
+			fmt.Printf("Insert new leaf: idx=%d, key=%x, value=%x\n", newIdx, newLeaf.Key, newLeaf.Value)
+			if err := m.saveNode(newLeaf); err != nil {
+				return nil, err
 			}
+			branch.Children[newIdx] = newLeaf
 		}
-
-		// If there's a common prefix, wrap the branch in an extension node
+		// 如果有公共前缀，创建扩展节点
 		if len(commonPrefix) > 0 {
-			return &ExtensionNode{
-				Path:     commonPrefix,
-				Value:    branch.GetHash(),
-				NodeType: ExtensionNodeType,
-			}, nil
+			if err := m.saveNode(branch); err != nil {
+				return nil, err
+			}
+			ext := &ExtensionNode{
+				Path:  commonPrefix,
+				Value: branch.GetHash(),
+				flags: nodeFlag{},
+			}
+			fmt.Printf("Create extension node: path=%x, value=%x\n", ext.Path, ext.Value)
+			if err := m.saveNode(ext); err != nil {
+				return nil, err
+			}
+			return ext, nil
 		}
-
+		if err := m.saveNode(branch); err != nil {
+			return nil, err
+		}
 		return branch, nil
 
 	case *ExtensionNode:
-		// If this is an extension node, we need to handle the path
-		commonPrefix := findCommonPrefix(n.Path, nibbles)
-		if len(commonPrefix) == len(n.Path) {
-			// The path matches, continue down the trie
-			child, err := m.LoadNode(n.Value)
-			if err != nil {
+		commonPrefix := findCommonPrefix(nibbles, n.Path)
+		if len(commonPrefix) != len(n.Path) {
+			// Create a branch node to split at the diverging point
+			branch := &FullNode{
+				flags: nodeFlag{},
+			}
+
+			// Add the existing extension node's path
+			if len(n.Path[len(commonPrefix):]) > 0 {
+				idx := n.Path[len(commonPrefix)]
+				ext := &ExtensionNode{
+					Path:  n.Path[len(commonPrefix)+1:],
+					Value: n.Value,
+					flags: nodeFlag{},
+				}
+				if err := m.saveNode(ext); err != nil {
+					return nil, err
+				}
+				branch.Children[idx] = ext
+			}
+
+			// Add the new path
+			if len(nibbles[len(commonPrefix):]) > 0 {
+				idx := nibbles[len(commonPrefix)]
+				leaf := &LeafNode{
+					Key:   nibbles[len(commonPrefix)+1:],
+					Value: value,
+					flags: nodeFlag{},
+				}
+				if err := m.saveNode(leaf); err != nil {
+					return nil, err
+				}
+				branch.Children[idx] = leaf
+			}
+
+			// Create extension node if needed
+			if len(commonPrefix) > 0 {
+				if err := m.saveNode(branch); err != nil {
+					return nil, err
+				}
+				ext := &ExtensionNode{
+					Path:  commonPrefix,
+					Value: branch.GetHash(),
+					flags: nodeFlag{},
+				}
+				if err := m.saveNode(ext); err != nil {
+					return nil, err
+				}
+				return ext, nil
+			}
+
+			if err := m.saveNode(branch); err != nil {
 				return nil, err
 			}
-			newChild, err := m.insert(child, nibbles[len(commonPrefix):], value)
-			if err != nil {
-				return nil, err
-			}
-			n.Value = newChild.GetHash()
-			return n, nil
+			return branch, nil
 		}
-
-		// Create a new branch node
-		branch := &BranchNode{
-			Children: [16]Node{},
-			NodeType: BranchNodeType,
+		mn, err := m.LoadNode(n.Value)
+		if err != nil {
+			return nil, err
 		}
-
-		// Insert the existing extension node
-		if len(n.Path) > len(commonPrefix) {
-			idx := n.Path[len(commonPrefix)]
-			branch.Children[idx] = &ExtensionNode{
-				Path:     n.Path[len(commonPrefix)+1:],
-				Value:    n.Value,
-				NodeType: ExtensionNodeType,
-			}
+		newChild, err := m.insert(mn, nibbles[len(commonPrefix):], value)
+		if err != nil {
+			return nil, err
 		}
-
-		// Insert the new value
-		if len(nibbles) > len(commonPrefix) {
-			idx := nibbles[len(commonPrefix)]
-			var hash common.Hash
-			hash.NewHash(value)
-			branch.Children[idx] = &LeafNode{
-				Key:      nibbles[len(commonPrefix)+1:],
-				Value:    hash,
-				NodeType: LeafNodeType,
-			}
+		n.Value = newChild.GetHash()
+		if err := m.saveNode(n); err != nil {
+			return nil, err
 		}
+		return n, nil
 
-		// If there's a common prefix, wrap the branch in an extension node
-		if len(commonPrefix) > 0 {
-			return &ExtensionNode{
-				Path:     commonPrefix,
-				Value:    branch.GetHash(),
-				NodeType: ExtensionNodeType,
-			}, nil
-		}
-
-		return branch, nil
-
-	case *BranchNode:
-		// If this is a branch node, we need to handle the children
+	case *FullNode:
 		if len(nibbles) == 0 {
 			var hash common.Hash
 			hash.NewHash(value)
 			n.Value = hash
+			if err := m.saveNode(n); err != nil {
+				return nil, err
+			}
 			return n, nil
 		}
 
@@ -211,13 +239,15 @@ func (m *MPT) insert(node Node, nibbles []byte, value []byte) (Node, error) {
 		child := n.Children[idx]
 		if child == nil {
 			// Create a new leaf node
-			var hash common.Hash
-			hash.NewHash(value)
-			n.Children[idx] = &LeafNode{
-				Key:      nibbles[1:],
-				Value:    hash,
-				NodeType: LeafNodeType,
+			leaf := &LeafNode{
+				Key:   nibbles[1:],
+				Value: value,
+				flags: nodeFlag{},
 			}
+			if err := m.saveNode(leaf); err != nil {
+				return nil, err
+			}
+			n.Children[idx] = leaf
 		} else {
 			// Insert into existing child
 			newChild, err := m.insert(child, nibbles[1:], value)
@@ -225,6 +255,9 @@ func (m *MPT) insert(node Node, nibbles []byte, value []byte) (Node, error) {
 				return nil, err
 			}
 			n.Children[idx] = newChild
+		}
+		if err := m.saveNode(n); err != nil {
+			return nil, err
 		}
 		return n, nil
 
@@ -237,13 +270,28 @@ func (m *MPT) insert(node Node, nibbles []byte, value []byte) (Node, error) {
 func (m *MPT) get(node Node, nibbles []byte) ([]byte, error) {
 	switch n := node.(type) {
 	case *LeafNode:
-		if len(nibbles) == 0 {
-			return n.Value.Bytes(), nil
+		fmt.Printf("LeafNode: key=%x, value=%x\n", n.Key, n.Value)
+		// 如果叶子节点的 key 为空，说明这是一个分支节点的直接子节点，直接返回其 value
+		if len(n.Key) == 0 {
+			return n.Value, nil
 		}
-		return nil, fmt.Errorf("key not found")
+		// 如果查找的key长度小于叶子节点的key长度，或者key不匹配，说明key不存在
+		if len(nibbles) < len(n.Key) || !bytes.Equal(n.Key, nibbles[:len(n.Key)]) {
+			fmt.Printf("LeafNode mismatch: nibbles=%x, key=%x\n", nibbles, n.Key)
+			return nil, fmt.Errorf("key not found")
+		}
+		// 如果查找的key长度与叶子节点的key长度不相等，说明不是完全匹配，key不存在
+		if len(nibbles) != len(n.Key) {
+			fmt.Printf("LeafNode length mismatch: nibbles=%x, key=%x\n", nibbles, n.Key)
+			return nil, fmt.Errorf("key not found")
+		}
+		return n.Value, nil
 
 	case *ExtensionNode:
-		if !hasPrefix(nibbles, n.Path) {
+		fmt.Printf("ExtensionNode: path=%x, value=%x\n", n.Path, n.Value)
+		// 如果查找的key长度小于扩展节点的路径长度，或者路径不匹配，说明key不存在
+		if len(nibbles) < len(n.Path) || !bytes.Equal(n.Path, nibbles[:len(n.Path)]) {
+			fmt.Printf("ExtensionNode mismatch: nibbles=%x, path=%x\n", nibbles, n.Path)
 			return nil, fmt.Errorf("key not found")
 		}
 		child, err := m.LoadNode(n.Value)
@@ -252,13 +300,18 @@ func (m *MPT) get(node Node, nibbles []byte) ([]byte, error) {
 		}
 		return m.get(child, nibbles[len(n.Path):])
 
-	case *BranchNode:
+	case *FullNode:
+		fmt.Printf("FullNode: nibbles=%x\n", nibbles)
 		if len(nibbles) == 0 {
 			return n.Value.Bytes(), nil
 		}
 		idx := nibbles[0]
+		if idx >= 16 {
+			return nil, fmt.Errorf("invalid nibble value: %d", idx)
+		}
 		child := n.Children[idx]
 		if child == nil {
+			fmt.Printf("FullNode: no child at index %d\n", idx)
 			return nil, fmt.Errorf("key not found")
 		}
 		return m.get(child, nibbles[1:])
@@ -295,7 +348,7 @@ func (m *MPT) delete(node Node, nibbles []byte) (Node, error) {
 		n.Value = newChild.GetHash()
 		return n, nil
 
-	case *BranchNode:
+	case *FullNode:
 		if len(nibbles) == 0 {
 			n.Value = common.Hash{}
 			return n, nil
