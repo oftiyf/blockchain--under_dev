@@ -43,11 +43,38 @@ func TestMPT_SimplePutGet(t *testing.T) {
 		t.Logf("Value (hex): %x", v)
 
 		// 尝试解码 JSON
-		var nodeData map[string]interface{}
-		if err := json.Unmarshal(v, &nodeData); err != nil {
-			t.Logf("Failed to decode JSON: %v", err)
-		} else {
-			t.Logf("Value (decoded): %+v", nodeData)
+		var nodeType struct {
+			NodeType NodeType `json:"nodeType"`
+		}
+		if err := json.Unmarshal(v, &nodeType); err != nil {
+			t.Logf("Failed to decode node type: %v", err)
+			continue
+		}
+
+		switch nodeType.NodeType {
+		case LeafNodeType:
+			var node LeafNode
+			if err := json.Unmarshal(v, &node); err != nil {
+				t.Logf("Failed to decode leaf node: %v", err)
+			} else {
+				t.Logf("Node: %s", node.String())
+			}
+		case ExtensionNodeType:
+			var node ExtensionNode
+			if err := json.Unmarshal(v, &node); err != nil {
+				t.Logf("Failed to decode extension node: %v", err)
+			} else {
+				t.Logf("Node: %s", node.String())
+			}
+		case BranchNodeType:
+			var node FullNode
+			if err := json.Unmarshal(v, &node); err != nil {
+				t.Logf("Failed to decode branch node: %v", err)
+			} else {
+				t.Logf("Node: %s", node.String())
+			}
+		default:
+			t.Logf("Unknown node type: %d", nodeType.NodeType)
 		}
 	}
 

@@ -189,3 +189,43 @@ func (n *FullNode) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// nibblesToBytes 将 nibbles 转换回字节
+func nibblesToBytes(nibbles []byte) []byte {
+	if len(nibbles) == 0 {
+		return nil
+	}
+	bytes := make([]byte, len(nibbles)/2)
+	for i := 0; i < len(nibbles); i += 2 {
+		bytes[i/2] = nibbles[i]<<4 | nibbles[i+1]
+	}
+	return bytes
+}
+
+// GetReadableKey 返回可读的键
+func (n *LeafNode) GetReadableKey() string {
+	return string(nibblesToBytes(n.Key))
+}
+
+// GetReadableValue 返回可读的值
+func (n *LeafNode) GetReadableValue() string {
+	return string(n.Value)
+}
+
+// GetReadablePath 返回可读的路径
+func (n *ExtensionNode) GetReadablePath() string {
+	return string(nibblesToBytes(n.Path))
+}
+
+// String 返回节点的字符串表示
+func (n *LeafNode) String() string {
+	return fmt.Sprintf("LeafNode{Type=%d, Key=%s, Value=%s}", n.NodeType, n.GetReadableKey(), n.GetReadableValue())
+}
+
+func (n *ExtensionNode) String() string {
+	return fmt.Sprintf("ExtensionNode{Type=%d, Path=%s, Value=%x}", n.NodeType, n.GetReadablePath(), n.Value)
+}
+
+func (n *FullNode) String() string {
+	return fmt.Sprintf("FullNode{Type=%d, Value=%x}", n.NodeType, n.Value)
+}
