@@ -195,16 +195,26 @@ func nibblesToBytes(nibbles []byte) []byte {
 	if len(nibbles) == 0 {
 		return nil
 	}
+	// 确保 nibbles 长度是偶数
+	if len(nibbles)%2 != 0 {
+		return nil
+	}
 	bytes := make([]byte, len(nibbles)/2)
 	for i := 0; i < len(nibbles); i += 2 {
-		bytes[i/2] = nibbles[i]<<4 | nibbles[i+1]
+		if i+1 < len(nibbles) {
+			bytes[i/2] = nibbles[i]<<4 | nibbles[i+1]
+		}
 	}
 	return bytes
 }
 
 // GetReadableKey 返回可读的键
 func (n *LeafNode) GetReadableKey() string {
-	return string(nibblesToBytes(n.Key))
+	bytes := nibblesToBytes(n.Key)
+	if bytes == nil {
+		return fmt.Sprintf("%x", n.Key) // 如果转换失败，返回十六进制表示
+	}
+	return string(bytes)
 }
 
 // GetReadableValue 返回可读的值
@@ -214,7 +224,11 @@ func (n *LeafNode) GetReadableValue() string {
 
 // GetReadablePath 返回可读的路径
 func (n *ExtensionNode) GetReadablePath() string {
-	return string(nibblesToBytes(n.Path))
+	bytes := nibblesToBytes(n.Path)
+	if bytes == nil {
+		return fmt.Sprintf("%x", n.Path) // 如果转换失败，返回十六进制表示
+	}
+	return string(bytes)
 }
 
 // String 返回节点的字符串表示
