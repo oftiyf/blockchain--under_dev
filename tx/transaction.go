@@ -161,9 +161,9 @@ func (tx *Transaction) GetSender() (common.Address, error) {
 	if err != nil {
 		return common.Address{}, err
 	}
-
+	publicKeyBytes := crypto.FromECDSAPub(pubKey)
 	// 从公钥获取地址
-	addr := common.Address{}.NewAddress(crypto.PubkeyToAddress(*pubKey).Bytes())
+	addr := common.Address{}.PublicKeyToAddress(publicKeyBytes)
 	return addr, nil
 }
 

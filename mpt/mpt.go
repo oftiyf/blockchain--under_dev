@@ -293,8 +293,13 @@ func (m *MPT) get(node Node, nibbles []byte) ([]byte, error) {
 			return n.Value, nil
 		}
 		// 如果查找的key长度小于叶子节点的key长度，或者key不匹配，说明key不存在
-		if len(nibbles) < len(n.Key) || !bytes.Equal(n.Key, nibbles[:len(n.Key)]) {
-			fmt.Printf("LeafNode mismatch: nibbles=%x, key=%x\n", nibbles, n.Key)
+		if len(nibbles) < len(n.Key) {
+			fmt.Printf("LeafNode length mismatch: nibbles=%x, key=%x\n", nibbles, n.Key)
+			return nil, fmt.Errorf("key not found")
+		}
+		// 比较key的前缀
+		if !bytes.Equal(n.Key, nibbles[:len(n.Key)]) {
+			fmt.Printf("LeafNode prefix mismatch: nibbles=%x, key=%x\n", nibbles, n.Key)
 			return nil, fmt.Errorf("key not found")
 		}
 		// 如果查找的key长度与叶子节点的key长度不相等，说明不是完全匹配，key不存在
@@ -307,8 +312,13 @@ func (m *MPT) get(node Node, nibbles []byte) ([]byte, error) {
 	case *ExtensionNode:
 		fmt.Printf("ExtensionNode: path=%x, value=%x\n", n.Path, n.Value)
 		// 如果查找的key长度小于扩展节点的路径长度，或者路径不匹配，说明key不存在
-		if len(nibbles) < len(n.Path) || !bytes.Equal(n.Path, nibbles[:len(n.Path)]) {
-			fmt.Printf("ExtensionNode mismatch: nibbles=%x, path=%x\n", nibbles, n.Path)
+		if len(nibbles) < len(n.Path) {
+			fmt.Printf("ExtensionNode length mismatch: nibbles=%x, path=%x\n", nibbles, n.Path)
+			return nil, fmt.Errorf("key not found")
+		}
+		// 比较路径前缀
+		if !bytes.Equal(n.Path, nibbles[:len(n.Path)]) {
+			fmt.Printf("ExtensionNode prefix mismatch: nibbles=%x, path=%x\n", nibbles, n.Path)
 			return nil, fmt.Errorf("key not found")
 		}
 		child, err := m.LoadNode(n.Value)
