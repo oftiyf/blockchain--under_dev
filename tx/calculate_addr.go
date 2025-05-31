@@ -1,26 +1,40 @@
 package tx
 
 import (
-	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
-// VerifyAddress 验证公钥哈希与签名中的地址是否一致
-// pubKey: 发送者的公钥
-// address: 签名中的地址
-// 返回值: 如果一致返回true，否则返回false和错误信息
-func VerifyAddress(pubKey []byte, address string) (bool, error) {
-	// 计算公钥的SHA256哈希
-	hash := sha256.Sum256(pubKey)
-
-	// 将哈希转换为十六进制字符串
-	hashHex := hex.EncodeToString(hash[:])
-
-	// 比较哈希值与地址是否一致
-	if hashHex == address {
-		return true, nil
+// RecoverAddressFromSignature recovers the sender's address from r, s, v values
+// r, s: signature components
+// v: recovery id (27 or 28)
+// hash: the hash of the message that was signed
+func RecoverAddressFromSignature(r, s string, v uint8, hash []byte) (common.Address, error) {
+	// Convert r and s from hex strings to big integers
+	rBytes, err := hex.DecodeString(r)
+	if err != nil {
+		return common.Address{}, err
+	}
+	sBytes, err := hex.DecodeString(s)
+	if err != nil {
+		return common.Address{}, err
 	}
 
-	return false, errors.New("public key hash does not match the address in signature")
+	// Create the signature
+	sig := make([]byte, 65)
+	copy(sig[32-len(rBytes):32], rBytes)
+	copy(sig[64-len(sBytes):64], sBytes)
+	sig[64] = v
+
+	// Recover the public key
+	pubKey, err := crypto.SigToPub(hash, sig)
+	if err != nil {
+		return common.Address{}, err
+	}
+
+	// Get the address from the public key
+	address := crypto.PubkeyToAddress(*pubKey)
+	return address, nil
 }
