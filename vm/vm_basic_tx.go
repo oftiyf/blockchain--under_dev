@@ -47,12 +47,6 @@ func (vm *VM) ExecuteTransaction(tx *tx.Transaction) error {
 	totalCost := new(big.Int).Mul(tx.GasPrice, new(big.Int).SetUint64(tx.GasLimit))
 	totalCost.Add(totalCost, tx.Value)
 
-	fmt.Printf("Debug - Sender balance: %v\n", senderAccount.Balance)
-	fmt.Printf("Debug - Gas price: %v\n", tx.GasPrice)
-	fmt.Printf("Debug - Gas limit: %v\n", tx.GasLimit)
-	fmt.Printf("Debug - Value: %v\n", tx.Value)
-	fmt.Printf("Debug - Total cost: %v\n", totalCost)
-
 	// 将总成本转换为uint64进行比较
 	if totalCost.Cmp(new(big.Int).SetUint64(senderAccount.Balance)) > 0 {
 		fmt.Printf("Debug - Insufficient balance: have %v, need %v\n", senderAccount.Balance, totalCost)
@@ -60,9 +54,10 @@ func (vm *VM) ExecuteTransaction(tx *tx.Transaction) error {
 	}
 
 	// 4. 执行交易
-	if tx.To == nil {
-		// 合约创建
-		return vm.createContract(tx, sender, totalCost)
+	if tx.To == nil || (tx.To.IsZero() && len(tx.Data) != 0) {
+		// 执行VM层操作
+		fmt.Printf("oftiyfdebug\n")
+		return vm.executeVMOperation(tx, sender, totalCost)
 	} else {
 		// 普通转账或合约调用
 		return vm.transfer(tx, sender, totalCost)
@@ -124,39 +119,76 @@ func (vm *VM) SetAccount(addr common.Address, account *common.Account) error {
 	return vm.stateDB.Put(key, accountData)
 }
 
-// createContract handles contract creation
-func (vm *VM) createContract(tx *tx.Transaction, sender common.Address, totalCost *big.Int) error {
-	// 1. 计算合约地址
-	nonceBytes := []byte{byte(tx.Nonce)}
-	hash := common.Hash{}.NewHash(append(sender.Bytes(), nonceBytes...))
-	contractAddr := common.Address{}.NewAddress(hash[:20])
+// executeVMOperation handles VM-level operations
+func (vm *VM) executeVMOperation(tx *tx.Transaction, sender common.Address, totalCost *big.Int) error {
+	switch {
+	case tx.To == nil || tx.To.IsZero():
+		// 创建新合约
+		// 计算操作地址
+		nonceBytes := []byte{byte(tx.Nonce)}
+		hash := common.Hash{}.NewHash(append(sender.Bytes(), nonceBytes...))
+		operationAddr := common.Address{}.NewAddress(hash[:20])
 
-	// 2. 检查合约地址是否已存在
-	exists, err := vm.stateDB.Get(contractAddr.Bytes())
-	if err == nil && exists != nil {
-		return errors.New("contract address already exists")
-	}
+		// 检查操作地址是否已存在
+		exists, err := vm.stateDB.Get(operationAddr.Bytes())
+		if err == nil && exists != nil {
+			return errors.New("operation address already exists")
+		}
 
-	// 3. 扣除发送者余额
-	senderAccount, err := vm.GetAccount(sender)
-	if err != nil {
-		return err
-	}
+		// 1. 扣除发送者余额
+		senderAccount, err := vm.GetAccount(sender)
+		if err != nil {
+			fmt.Printf("Debug - Failed to get sender account: %v\n", err)
+			return err
+		}
 
-	senderAccount.Balance -= totalCost.Uint64()
-	senderAccount.Nonce++
-	if err := vm.SetAccount(sender, senderAccount); err != nil {
-		return err
-	}
+		senderAccount.Balance -= totalCost.Uint64()
+		senderAccount.Nonce++
+		if err := vm.SetAccount(sender, senderAccount); err != nil {
+			fmt.Printf("Debug - Failed to set sender account: %v\n", err)
+			return err
+		}
 
-	// 4. 设置合约初始余额
-	contractAccount := &common.Account{
-		Balance: tx.Value.Uint64(),
-		Nonce:   0,
-		Code:    tx.Data,
-	}
-	if err := vm.SetAccount(contractAddr, contractAccount); err != nil {
-		return err
+		// 设置操作初始状态
+		operationAccount := &common.Account{
+			Nonce:    0,
+			Balance:  tx.Value.Uint64(),
+			CodeHash: common.Hash{}.NewHash(tx.Data).Bytes(),
+			Code:     tx.Data,
+			Storage:  make(map[string]string),
+			IsEoa:    false,
+		}
+		if err := vm.SetAccount(operationAddr, operationAccount); err != nil {
+			fmt.Printf("Debug - Failed to set operation account: %v\n", err)
+			return err
+		}
+		fmt.Printf("Debug - Operation account: %v\n", operationAccount)
+
+	default:
+		// 调用已存在的合约
+		// 1. 扣除发送者余额
+		senderAccount, err := vm.GetAccount(sender)
+		if err != nil {
+			return err
+		}
+
+		senderAccount.Balance -= totalCost.Uint64()
+		senderAccount.Nonce++
+		if err := vm.SetAccount(sender, senderAccount); err != nil {
+			return err
+		}
+
+		contractAccount, err := vm.GetAccount(*tx.To)
+		if err != nil {
+			return err
+		}
+
+		if len(contractAccount.Code) == 0 {
+			return errors.New("not a contract address")
+		}
+		fmt.Printf("12312313212 %v\n", contractAccount)
+		// TODO: 实现合约调用逻辑
+		// 这里需要实现EVM的指令集和合约执行逻辑
 	}
 
 	return nil

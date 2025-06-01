@@ -35,7 +35,7 @@ func main() {
 	}{
 		{
 			key:   []byte("0x1234567890abcdef1234567890abcdef12345678"), // 模拟公钥哈希
-			value: common.NewEOA(),                                      // 创建外部账户
+			value: common.NewEOA([]byte("0x1234567890abcdef1234567890abcdef12345678")), // 创建外部账户
 		},
 		{
 			key: []byte("0xabcdef1234567890abcdef1234567890abcdef12"),
@@ -117,7 +117,7 @@ func main() {
 	// 3. 更新测试
 	fmt.Println("\n3. 更新账户数据:")
 	updateKey := accounts[0].key
-	updatedAccount := common.NewEOA()
+	updatedAccount := common.NewEOA([]byte("0x1234567890abcdef1234567890abcdef12345678"))
 	updatedAccount.Nonce = 10
 	updatedAccount.Balance = 5000
 	updatedAccount.Storage = map[string]string{

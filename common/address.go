@@ -33,6 +33,16 @@ func (a Address) String() string {
 	return hex.EncodeToString(a[:])
 }
 
+// IsZero returns true if the address is the zero address
+func (a Address) IsZero() bool {
+	for _, b := range a {
+		if b != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func PrivateKeyToPublicKey(hexKey string) ([]byte, error) {
 	// 移除可能的 "0x" 前缀
 	hexKey = strings.TrimPrefix(hexKey, "0x")

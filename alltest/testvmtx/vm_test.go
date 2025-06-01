@@ -131,15 +131,15 @@ func TestVM_ExecuteTransaction(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to sign transaction: %v", err)
 		}
-
+		
+		nonceBytes := []byte{byte(contractTx.Nonce)}
 		// 执行交易
 		err = virtualMachine.ExecuteTransaction(contractTx)
 		if err != nil {
 			t.Errorf("Contract creation failed: %v", err)
 		}
 
-		// 验证合约地址是否存在
-		nonceBytes := []byte{byte(contractTx.Nonce)}
+		
 		hash := common.Hash{}.NewHash(append(senderAddr.Bytes(), nonceBytes...))
 		contractAddr := common.Address{}.NewAddress(hash[:20])
 		contractAccount, err := virtualMachine.GetAccount(contractAddr)
@@ -158,7 +158,8 @@ func TestVM_ExecuteTransaction(t *testing.T) {
 
 		// 计算gas费用
 		gasCost := uint64(contractTx.GasLimit) * contractTx.GasPrice.Uint64()
-		expectedSenderBalance := uint64(2000000) - gasCost // 注意这里改为2000000，因为之前已经mint过一次
+		// 2000000 (两次mint) - 50 (第一次转账) - 1000 (第一次gas) - gasCost (本次合约创建gas)
+		expectedSenderBalance := uint64(2000000) - 50 - 1000 - gasCost
 
 		if senderAccount.Balance != expectedSenderBalance {
 			t.Errorf("Sender balance incorrect after contract creation. Got %v, want %v", senderAccount.Balance, expectedSenderBalance)
@@ -177,10 +178,10 @@ func TestVM_ExecuteTransaction(t *testing.T) {
 			0, // nonce
 			receiver,
 			big.NewInt(1000000000000000000), // value
-			21000,           // gasLimit
-			big.NewInt(1),   // gasPrice
-			nil,             // data
-			big.NewInt(1),   // chainID
+			21000,                           // gasLimit
+			big.NewInt(1),                   // gasPrice
+			nil,                             // data
+			big.NewInt(1),                   // chainID
 		)
 
 		// 签名交易
