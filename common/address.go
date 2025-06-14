@@ -67,7 +67,7 @@ func PrivateKeyToPublicKey(hexKey string) ([]byte, error) {
 }
 
 func (a Address) PublicKeyToAddress(publicKey []byte) Address {
-	//hash the public key
+	// 使用 MIMC 哈希公钥
 	hash := Hash{}.NewHash(publicKey)
 	return Address{}.NewAddress(hash[:AddressLength])
 }

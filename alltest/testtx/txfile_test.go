@@ -22,7 +22,9 @@ func setupTestKey(t *testing.T) (*common.Address, []byte) {
 	privateKey, err := crypto.ToECDSA(privateKeyBytes)
 	assert.NoError(t, err)
 
-	fromAddress := common.Address{}.NewAddress(crypto.PubkeyToAddress(privateKey.PublicKey).Bytes())
+	// 使用 MIMC 哈希生成地址
+	publicKeyBytes := crypto.FromECDSAPub(&privateKey.PublicKey)
+	fromAddress := common.Address{}.PublicKeyToAddress(publicKeyBytes)
 	return &fromAddress, privateKeyBytes
 }
 
@@ -82,12 +84,12 @@ func TestTransactionCreation(t *testing.T) {
 			)
 
 			assert.NotNil(t, tx)
-			assert.Equal(t, tc.nonce, tx.Nonce)
-			assert.Equal(t, tc.value.String(), tx.Value.String())
-			assert.Equal(t, tc.gasPrice.String(), tx.GasPrice.String())
-			assert.Equal(t, tc.gasLimit, tx.GasLimit)
-			assert.Equal(t, tc.data, tx.Data)
-			assert.Equal(t, tc.chainID.String(), tx.ChainID.String())
+			assert.Equal(t, tc.nonce, tx.TxData.Nonce)
+			assert.Equal(t, tc.value.String(), tx.TxData.Value.String())
+			assert.Equal(t, tc.gasPrice.String(), tx.TxData.GasPrice.String())
+			assert.Equal(t, tc.gasLimit, tx.TxData.GasLimit)
+			assert.Equal(t, tc.data, tx.TxData.Data)
+			assert.Equal(t, tc.chainID.String(), tx.TxData.ChainID.String())
 		})
 	}
 }
@@ -118,12 +120,12 @@ func TestTransactionSerialization(t *testing.T) {
 	assert.NotNil(t, decodedTx)
 
 	// 验证反序列化后的数据
-	assert.Equal(t, testTx.Nonce, decodedTx.Nonce)
-	assert.Equal(t, testTx.GasPrice.String(), decodedTx.GasPrice.String())
-	assert.Equal(t, testTx.GasLimit, decodedTx.GasLimit)
-	assert.Equal(t, testTx.To.String(), decodedTx.To.String())
-	assert.Equal(t, testTx.Value.String(), decodedTx.Value.String())
-	assert.Equal(t, testTx.ChainID.String(), decodedTx.ChainID.String())
+	assert.Equal(t, testTx.TxData.Nonce, decodedTx.TxData.Nonce)
+	assert.Equal(t, testTx.TxData.GasPrice.String(), decodedTx.TxData.GasPrice.String())
+	assert.Equal(t, testTx.TxData.GasLimit, decodedTx.TxData.GasLimit)
+	assert.Equal(t, testTx.TxData.To.String(), decodedTx.TxData.To.String())
+	assert.Equal(t, testTx.TxData.Value.String(), decodedTx.TxData.Value.String())
+	assert.Equal(t, testTx.TxData.ChainID.String(), decodedTx.TxData.ChainID.String())
 }
 
 func TestTransactionSigning(t *testing.T) {
@@ -144,10 +146,10 @@ func TestTransactionSigning(t *testing.T) {
 	// 测试签名
 	err := testTx.Sign(privateKeyBytes)
 	assert.NoError(t, err)
-	assert.NotNil(t, testTx.R)
-	assert.NotNil(t, testTx.S)
-	assert.NotNil(t, testTx.V)
-	t.Logf("签名: r=%s\ns=%s\nv=%s", testTx.R.String(), testTx.S.String(), testTx.V.String())
+	assert.NotNil(t, testTx.SignatureData.R)
+	assert.NotNil(t, testTx.SignatureData.S)
+	assert.NotNil(t, testTx.SignatureData.V)
+	t.Logf("签名: r=%s\ns=%s\nv=%s", testTx.SignatureData.R.String(), testTx.SignatureData.S.String(), testTx.SignatureData.V.String())
 
 	// 测试从签名恢复地址
 	recoveredAddress, err := testTx.GetSender()
@@ -185,13 +187,13 @@ func TestTransactionWithData(t *testing.T) {
 
 	decodedTx, err := tx.Deserialize(serializedData)
 	assert.NoError(t, err)
-	t.Logf("反序列化: Nonce=%d, Data=%s", decodedTx.Nonce, string(decodedTx.Data))
-	assert.Equal(t, data, decodedTx.Data)
+	t.Logf("反序列化: Nonce=%d, Data=%s", decodedTx.TxData.Nonce, string(decodedTx.TxData.Data))
+	assert.Equal(t, data, decodedTx.TxData.Data)
 
 	// 测试签名和验证
 	err = testTx.Sign(privateKeyBytes)
 	assert.NoError(t, err)
-	t.Logf("签名: r=%s\ns=%s\nv=%s", testTx.R.String(), testTx.S.String(), testTx.V.String())
+	t.Logf("签名: r=%s\ns=%s\nv=%s", testTx.SignatureData.R.String(), testTx.SignatureData.S.String(), testTx.SignatureData.V.String())
 
 	recoveredAddress, err := testTx.GetSender()
 	assert.NoError(t, err)

@@ -431,6 +431,7 @@ func (m *MPT) delete(node Node, nibbles []byte) (Node, error) {
 // saveNode saves a node to the database
 func (m *MPT) saveNode(node Node) error {
 	// 先保存所有子节点
+	// 检查节点是否为FullNode类型,如果是则将node转换为*FullNode类型并赋值给fullNode变量
 	if fullNode, ok := node.(*FullNode); ok {
 		for _, child := range fullNode.Children {
 			if child != nil {
