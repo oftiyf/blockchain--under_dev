@@ -29,7 +29,7 @@ type nodeFlag struct {
 type FullNode struct {
 	NodeType NodeType    `json:"nodeType"`
 	Children [17]Node    `json:"-"`
-	Value    common.Hash `json:"value"`
+	Value    common.Hash `json:"value"`//短节点才会考虑这个
 	flags    nodeFlag    `json:"-"`
 }
 
