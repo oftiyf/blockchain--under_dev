@@ -233,3 +233,12 @@ func Deserialize(data []byte) (*Transaction, error) {
 	}
 	return tx, nil
 }
+
+
+func (tx *Transaction) GetNonce() uint64 {
+	return tx.TxData.Nonce
+}
+
+func (tx *Transaction) GetGasPrice() *big.Int {
+	return tx.TxData.GasPrice
+}

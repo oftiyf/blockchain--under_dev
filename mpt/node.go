@@ -40,6 +40,8 @@ type LeafNode struct {
 	flags    nodeFlag `json:"-"`
 }
 
+
+
 type ExtensionNode struct {
 	NodeType NodeType    `json:"nodeType"`
 	Path     []byte      `json:"path"`
