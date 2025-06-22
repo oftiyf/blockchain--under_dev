@@ -1,12 +1,13 @@
 package tx
 
 import (
-	
+	"blockchain/common"
 	"math/big"
 )
 
 // 这里采用队列的逻辑，先进先出
 type TxBox struct {
+	address    common.Address
 	txs        []*Transaction
 	firstnonce uint64
 	lastnonce  uint64
@@ -14,8 +15,9 @@ type TxBox struct {
 }
 
 // NewTxBox creates a new transaction queue
-func NewTxBox(txs []*Transaction) *TxBox {
+func NewTxBox(address common.Address, txs []*Transaction) *TxBox {
 	return &TxBox{
+		address:    address,
 		txs:        txs,
 		firstnonce: txs[0].GetNonce(),
 		lastnonce:  txs[len(txs)-1].GetNonce(),
@@ -23,9 +25,10 @@ func NewTxBox(txs []*Transaction) *TxBox {
 	}
 }
 
-// Enqueue adds a transaction to the end of the queue
+// @audit 这里需要去问，是否需要去考虑，同一个nonce，出现多次不同的情况？比如box的分裂等，那么返回的应该不是一个可能
 func (txbox *TxBox) Enqueue(tx *Transaction) error {
 	txbox.txs = append(txbox.txs, tx)
+	//
 	//check gasprice same
 	// 检查新交易的gas价格是否与txbox中已有交易的gas价格相同
 	// 如果不同则panic,因为同一个txbox中的所有交易gas价格必须相同
@@ -64,3 +67,7 @@ func (txbox *TxBox) Getlength() int {
 func (txbox *TxBox) GetGasPrice() *big.Int {
 	return txbox.gasprice
 }
+
+func (txbox *TxBox) GetAddress() common.Address {
+	return txbox.address
+}	
