@@ -3,6 +3,7 @@ package tx
 import (
 	"blockchain/common"
 	"blockchain/mpt"
+	"fmt"
 )
 
 // TransactionExecutor defines the interface for executing transactions
@@ -19,8 +20,10 @@ type TxPool struct {
 func NewTxPool(mpt *mpt.MPT) *TxPool {
 	return &TxPool{
 		pending: PendingPool{},
-		queued:  TxQueue{},
-		mpt:     mpt,
+		queued: TxQueue{
+			txs: make(map[common.Address][]*Transaction),
+		},
+		mpt: mpt,
 	}
 }
 
@@ -90,14 +93,52 @@ func (txPool *TxPool) addtx(tx *Transaction) error {
 	}
 	nonce, err := txPool.getaccountnonce(addr)
 	if err != nil {
+		fmt.Println("getaccountnonce failed")
 		return err
 	}
-	if tx.GetNonce() != nonce {
-		return err
-	}
+
 	txs := txPool.queued.Enqueue(tx, nonce)
 	if txs[0].GetNonce() == nonce+1 {
 		txPool.pending.addtxs(txs)
+		fmt.Println("addtxs success")
 	}
 	return nil
+}
+
+// 公共方法，供测试使用
+
+// GetAccountNonce 获取账户nonce
+func (txPool *TxPool) GetAccountNonce(addr common.Address) (uint64, error) {
+	return txPool.getaccountnonce(addr)
+}
+
+// AddTx 添加交易
+func (txPool *TxPool) AddTx(tx *Transaction) error {
+	txPool.addtx(tx)
+	return nil
+}
+
+// Execute 执行交易
+func (txPool *TxPool) Execute(executor TransactionExecutor, num int) error {
+	return txPool.execute(executor, num)
+}
+
+// ExecuteTxBox 执行单个盒子
+func (txPool *TxPool) ExecuteTxBox(txbox *TxBox, executor TransactionExecutor, remaining int) (int, error) {
+	return txPool.executeTxBox(txbox, executor, remaining)
+}
+
+// GetPendingTxBoxes 获取pending pool的盒子
+func (txPool *TxPool) GetPendingTxBoxes() []*TxBox {
+	return txPool.pending.GetTxBoxes()
+}
+
+// SortPendingPool 排序pending pool
+func (txPool *TxPool) SortPendingPool() {
+	txPool.pending.sortByGasPrice()
+}
+
+// MergePendingBoxes 合并pending pool的盒子
+func (txPool *TxPool) MergePendingBoxes() {
+	txPool.pending.MergeBoxesByGasPrice()
 }
