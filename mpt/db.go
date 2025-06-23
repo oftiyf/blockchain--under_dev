@@ -7,7 +7,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
-// DB 封装 levelDB 操作的结构体
+// DB 封装 levelDB 操作的结构体123
 type DB struct {
 	db *leveldb.DB
 }
