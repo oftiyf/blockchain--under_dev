@@ -85,11 +85,14 @@ func TestCompleteTransactionFlow(t *testing.T) {
 	senderAddr := common.Address{}.NewAddress(hash[:20])
 	fmt.Printf("Debug - Generated sender address: %v\n", senderAddr)
 
-	// 2. 创建接收者地址
-	receiverBytes := make([]byte, 20)
-	copy(receiverBytes, []byte("receiver_address_123"))
-	receiverAddr := common.Address{}.NewAddress(receiverBytes)
-	fmt.Printf("Debug - Generated receiver address: %v\n", receiverAddr)
+	// 2. 创建多个接收者地址
+	receiverAddrs := make([]common.Address, 5)
+	for i := 0; i < 5; i++ {
+		receiverBytes := make([]byte, 20)
+		copy(receiverBytes, []byte(fmt.Sprintf("receiver_%d_address", i)))
+		receiverAddrs[i] = common.Address{}.NewAddress(receiverBytes)
+		fmt.Printf("Debug - Generated receiver %d address: %v\n", i, receiverAddrs[i])
+	}
 
 	// 3. 创建共享的数据库、VM和交易池
 	db, err := mpt.NewDB(filepath.Join(dbDir, "MPT_shared"))
@@ -102,7 +105,7 @@ func TestCompleteTransactionFlow(t *testing.T) {
 	virtualMachine := vm.NewVM(stateDB)
 	txPool := tx.NewTxPool(stateDB)
 
-	// 4. 给发送者mint代币（这会创建账户）
+	// 4. 给发送者mint代币（这会创建账户）100 0000个代币
 	fmt.Printf("Debug - Minting tokens to sender...\n")
 	err = virtualMachine.Mint(senderAddr)
 	if err != nil {
@@ -129,51 +132,66 @@ func TestCompleteTransactionFlow(t *testing.T) {
 		t.Errorf("Expected nonce 0, got %d", nonce)
 	}
 
-	// 6. 创建转账交易
-	fmt.Printf("Debug - Creating transfer transaction...\n")
-	transferValue := big.NewInt(500000) // 50万代币
-	gasPrice := big.NewInt(1)           // 1 wei
-	gasLimit := uint64(21000)           // 标准转账gas
+	// 6. 创建多笔转账交易
+	fmt.Printf("Debug - Creating multiple transfer transactions...\n")
+	transactions := make([]*tx.Transaction, 5)
+	transferValues := []*big.Int{
+		big.NewInt(100000), // 第1笔：10万代币  89 12.1
+		big.NewInt(150000), // 第2笔：15万代币  78 12.1
+		big.NewInt(200000), // 第3笔：20万代币  62 17.1
+		big.NewInt(250000), // 第4笔：25万代币	51 12.1
+		big.NewInt(200000), // 第5笔：20万代币  35
+	}
+	gasPrice := big.NewInt(1) // 1 wei
+	gasLimit := uint64(10000) // 标准转账gas
 
-	// 创建nonce为0的转账交易
-	transferTx := tx.NewTransaction(
-		1,             // nonce
-		receiverAddr,  // to
-		transferValue, // value
-		gasLimit,      // gasLimit
-		gasPrice,      // gasPrice
-		[]byte{},      // data
-		big.NewInt(1), // chainID
-	)
+	for i := 0; i < 5; i++ {
+		// 创建nonce为i+1的转账交易
+		transferTx := tx.NewTransaction(
+			uint64(i+1),       // nonce从1开始递增
+			receiverAddrs[i],  // to
+			transferValues[i], // value
+			gasLimit,          // gasLimit
+			gasPrice,          // gasPrice
+			[]byte{},          // data
+			big.NewInt(1),     // chainID
+		)
 
-	// 签名交易
-	err = transferTx.Sign(privateKeyBytes)
-	if err != nil {
-		t.Fatalf("Failed to sign transfer transaction: %v", err)
+		// 签名交易
+		err = transferTx.Sign(privateKeyBytes)
+		if err != nil {
+			t.Fatalf("Failed to sign transfer transaction %d: %v", i+1, err)
+		}
+
+		transactions[i] = transferTx
+		fmt.Printf("Debug - Created transaction %d with nonce %d, value %v\n", i+1, i+1, transferValues[i])
 	}
 
-	// 7. 将交易添加到交易池
-	fmt.Printf("Debug - Adding transaction to pool...\n")
-	err = txPool.AddTx(transferTx)
-	if err != nil {
-		t.Fatalf("Failed to add transaction to pool: %v", err)
+	// 7. 将所有交易添加到交易池
+	fmt.Printf("Debug - Adding all transactions to pool...\n")
+	for i, transferTx := range transactions {
+		err = txPool.AddTx(transferTx)
+		if err != nil {
+			t.Fatalf("Failed to add transaction %d to pool: %v", i+1, err)
+		}
+		fmt.Printf("Debug - Added transaction %d to pool\n", i+1)
 	}
 
-	// 验证交易是否被添加到pending pool
-	txBoxes := txPool.GetPendingTxBoxes()
+	// 验证交易是否被添加到queue pool（不是pending pool）
+	txBoxes := txPool.GetQueueTxBoxes()
 	if len(txBoxes) == 0 {
-		t.Fatal("Transaction not added to pending pool")
+		t.Fatal("No transactions added to queue pool")
 	}
-	fmt.Printf("Debug - Transaction added to pool, pending boxes: %d\n", len(txBoxes))
+	fmt.Printf("Debug - All transactions added to pool, queue boxes: %d\n", len(txBoxes))
 
 	// 8. 创建真实的交易执行器
 	executor := NewRealTransactionExecutor(virtualMachine)
 
-	// 9. 通过交易池执行交易
-	fmt.Printf("Debug - Executing transaction through pool...\n")
-	err = txPool.Execute(executor, 1)
+	// 9. 通过交易池执行所有交易
+	fmt.Printf("Debug - Executing all transactions through pool...\n")
+	err = txPool.Execute(executor, 5) // 执行5笔交易
 	if err != nil {
-		t.Fatalf("Failed to execute transaction: %v", err)
+		t.Fatalf("Failed to execute transactions: %v", err)
 	}
 
 	// 10. 验证执行结果
@@ -185,36 +203,50 @@ func TestCompleteTransactionFlow(t *testing.T) {
 		t.Fatalf("Failed to get updated sender account: %v", err)
 	}
 
-	// 计算gas费用
-	gasCost := uint64(gasLimit) * gasPrice.Uint64()
-	expectedSenderBalance := uint64(1000000) - transferValue.Uint64() - gasCost
+	// 计算总转账金额和gas费用
+	totalTransferValue := uint64(0)
+	for _, value := range transferValues {
+		totalTransferValue += value.Uint64()
+	}
+	totalGasCost := uint64(5) * gasPrice.Uint64() // 5笔交易的gas费用
+	expectedSenderBalance := uint64(1000000) - totalTransferValue - totalGasCost
+
+	fmt.Printf("Debug - Total transfer value: %v\n", totalTransferValue)
+	fmt.Printf("Debug - Total gas cost: %v\n", totalGasCost)
 	fmt.Printf("Debug - Expected sender balance: %v, Actual: %v\n", expectedSenderBalance, updatedSenderAccount.Balance)
 
 	if updatedSenderAccount.Balance != expectedSenderBalance {
 		t.Errorf("Sender balance incorrect. Expected %v, got %v", expectedSenderBalance, updatedSenderAccount.Balance)
 	}
 
-	// 验证接收者余额
-	receiverAccount, err := virtualMachine.GetAccount(receiverAddr)
-	if err != nil {
-		t.Fatalf("Failed to get receiver account: %v", err)
-	}
-	fmt.Printf("Debug - Receiver balance: %v\n", receiverAccount.Balance)
+	// 验证所有接收者余额
+	for i, receiverAddr := range receiverAddrs {
+		receiverAccount, err := virtualMachine.GetAccount(receiverAddr)
+		if err != nil {
+			t.Fatalf("Failed to get receiver %d account: %v", i+1, err)
+		}
+		fmt.Printf("Debug - Receiver %d balance: %v (expected: %v)\n", i+1, receiverAccount.Balance, transferValues[i].Uint64())
 
-	if receiverAccount.Balance != transferValue.Uint64() {
-		t.Errorf("Receiver balance incorrect. Expected %v, got %v", transferValue.Uint64(), receiverAccount.Balance)
+		if receiverAccount.Balance != transferValues[i].Uint64() {
+			t.Errorf("Receiver %d balance incorrect. Expected %v, got %v", i+1, transferValues[i].Uint64(), receiverAccount.Balance)
+		}
 	}
 
 	// 验证发送者nonce增加
-	if updatedSenderAccount.Nonce != 1 {
-		t.Errorf("Sender nonce should be 1, got %v", updatedSenderAccount.Nonce)
+	expectedNonce := uint64(5) // 执行了5笔交易，nonce应该是5
+	if updatedSenderAccount.Nonce != expectedNonce {
+		t.Errorf("Sender nonce should be %v, got %v", expectedNonce, updatedSenderAccount.Nonce)
 	}
 
-	// 11. 验证交易池状态
-	remainingTxBoxes := txPool.GetPendingTxBoxes()
-	if len(remainingTxBoxes) != 0 {
-		t.Errorf("Expected no remaining transactions in pool, got %d", len(remainingTxBoxes))
+	// 11. 验证交易池状态 - 执行完成后，queue和pending都应该为空
+	remainingQueueBoxes := txPool.GetQueueTxBoxes()
+	remainingPendingBoxes := txPool.GetPendingTxBoxes()
+	if len(remainingQueueBoxes) != 0 {
+		t.Errorf("Expected no remaining transactions in queue, got %d", len(remainingQueueBoxes))
+	}
+	if len(remainingPendingBoxes) != 0 {
+		t.Errorf("Expected no remaining transactions in pending, got %d", len(remainingPendingBoxes))
 	}
 
-	fmt.Printf("Debug - Complete transaction flow test passed!\n")
+	fmt.Printf("Debug - Complete transaction flow test with multiple transactions passed!\n")
 }

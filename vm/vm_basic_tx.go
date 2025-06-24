@@ -203,7 +203,11 @@ func (vm *VM) transfer(tx *tx.Transaction, sender common.Address, totalCost *big
 	}
 
 	senderAccount.Balance -= totalCost.Uint64()
+	fmt.Printf("Debug - totalCostaawdsaw: %v\n", totalCost)
+	fmt.Printf("Debug - tx.Value: %v\n", tx.Value)
+	fmt.Printf("Debug - Sender balance before transfer123321: %v\n", senderAccount.Balance)
 	senderAccount.Nonce++
+	fmt.Printf("Debug - Sender nonce after deducting cost: %v, new nonce: %v\n", senderAccount.Balance, senderAccount.Nonce)
 	if err := vm.SetAccount(sender, senderAccount); err != nil {
 		return err
 	}
