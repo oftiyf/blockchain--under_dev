@@ -4,6 +4,7 @@ import (
 	"blockchain/common"
 	"blockchain/mpt"
 	"errors"
+	"fmt"
 	"sort"
 )
 
@@ -60,7 +61,7 @@ func (pool *TxPool) NewTX(tx *Transaction) error {
 		// push
 		pool.addPendingTx(tx)
 		return nil
-	} else { // tx.nonce<account.nonce+1说明要替换pending中的交易
+	} else { // tx.nonce<=account.nonce说明要替换pending中的交易
 		// 替换
 		pool.replacePendingTx(tx)
 		return nil
@@ -176,26 +177,33 @@ func (pool *TxPool) replacePendingTx(tx *Transaction) error {
 	var flag int
 	newboxes := []*TxBox{}
 	for i, txbox := range oldtxboxes {
-		if txbox.firstnonce <= tx.Nonce && tx.Nonce <= txbox.lastnonce { //找到要替换的txbox
-			lastbox := oldtxboxes[:i-1] //这里模拟的就是一开始lastbox
+		if txbox.firstnonce == tx.Nonce { //找到要替换的txbox
+			fmt.Println("txbox[0]", txbox.txs[0])
+			fmt.Println("tx", tx)
+			lastbox := oldtxboxes[:i] //这里模拟的就是一开始lastbox
+			txbox.txs[0] = tx
+			fmt.Println("lastboxdwasdaw", lastbox)
 			for _, tx := range txbox.txs {
 				//这里模拟一下pending=>queue的逻辑，假设tx.box为queue中的，而lastbox一开始为pending中的
-				pool.cutPending(lastbox, tx)
+				lastbox = pool.cutPending(lastbox, tx)
+				fmt.Println("lastbox[0]123", lastbox[0].txs[0])
 			}
 			lastbox = append(lastbox, oldtxboxes[i:]...)
 			newboxes = append(newboxes, lastbox...)
-
-			pool.pending[address] = lastbox
+			fmt.Println("newboxes")
+			
 			flag = i
 			break
-		}
+		} 
 	}
 	newboxes = append(newboxes, oldtxboxes[flag:]...)
+	pool.pending[address] = newboxes
 	//删除一下Sortedboxes里面地址等于address的txbox
 	for i, txbox := range pool.Sortedboxes {
 		if txbox.GetAddress() == address {
+			// 删除第i个元素
 			pool.Sortedboxes = append(pool.Sortedboxes[:i], pool.Sortedboxes[i+1:]...)
-			break
+			
 		}
 	}
 	//添加一下newboxes到Sortedboxes中
@@ -206,16 +214,19 @@ func (pool *TxPool) replacePendingTx(tx *Transaction) error {
 	return nil
 }
 
-func (pool *TxPool) cutPending(boxes []*TxBox, tx *Transaction) error {
+func (pool *TxPool) cutPending(boxes []*TxBox, tx *Transaction) []*TxBox {
 	//这里是模仿的queue=>pending的逻辑，但是这里不进行递归调用，外层for循环来便利
 	address, err := tx.GetSender()
 	if err != nil {
-		return err
+		return nil
 	}
 	if len(boxes) == 0 {
 		//加到pending中
 		box := NewTxBox(address, []*Transaction{tx})
+		fmt.Println("txincutpending", tx)
 		boxes = append(boxes, box)
+		fmt.Println("boxes123123123asdawsda123", boxes)
+		return boxes
 	} else {
 		last := boxes[len(boxes)-1]
 		if tx.GasPrice.Cmp(last.GetGasPrice()) >= 0 { //这里是，如果tx.gas>=last.gas，说明要加到最后一个box里面
@@ -227,7 +238,7 @@ func (pool *TxPool) cutPending(boxes []*TxBox, tx *Transaction) error {
 			boxes = append(boxes, box)
 		}
 	}
-	return nil
+	return boxes
 }
 
 //--------------------------------------------------------------------------------------
