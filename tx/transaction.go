@@ -242,3 +242,12 @@ func (tx *Transaction) GetNonce() uint64 {
 func (tx *Transaction) GetGasPrice() *big.Int {
 	return tx.TxData.GasPrice
 }
+
+
+func (tx *Transaction) Hash() *common.Hash {
+	hash, err := tx.GetHash()
+	if err != nil {
+		return nil
+	}
+	return &hash
+}
