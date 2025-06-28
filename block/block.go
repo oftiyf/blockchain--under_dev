@@ -59,6 +59,6 @@ func (chain *Blockchain) AddBlock(header *Header, body *Body,state *mpt.MPT,txpo
 }
 
 func (chain *Blockchain) Broadcast(header *Header, body *Body) error{
-	
+	//要广播，但是没实现这里，这里先空着
 	return nil
 }

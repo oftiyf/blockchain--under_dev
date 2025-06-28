@@ -18,7 +18,7 @@ type BlockMaker struct {
 	state *mpt.MPT
 	vm *vm.VM
 	chainConfig ChainConfig//这里记录一些链的配置信息
-	chain *block.Blockchain
+	chain *block.Blockchain//初始化应该为空
 	nextHeader *block.Header//区块头，用于生成区块
 	nextBody *block.Body//区块体，用于生成区块
 
@@ -27,9 +27,9 @@ type BlockMaker struct {
 	interrupt chan bool
 }
 
-func NewBlockMaker(txpool *tx.TxPool, state *mpt.MPT, vm *vm.VM) *BlockMaker {
+func NewBlockMaker(txpool *tx.TxPool, state *mpt.MPT) *BlockMaker {
 	
-	return &BlockMaker{txpool: txpool, state: state, vm: vm,}
+	return &BlockMaker{txpool: txpool, state: state}
 }
 
 
@@ -59,6 +59,7 @@ func (maker *BlockMaker) Pack() error {
 
 func (maker *BlockMaker) pack()  {
 	//小写的只取一个交易进行打包
+	maker.vm=vm.NewVM(maker.state)//这里创建一个vm，用于执行交易
 	tx := maker.txpool.Pop()
 	maker.vm.ExecuteTransaction(tx)//注意，这里的mpt树等状态是在vm创建中的，所以这里不需要传入mpt树
 	maker.nextBody.Transactions = append(maker.nextBody.Transactions, *tx)
@@ -93,7 +94,9 @@ func (maker *BlockMaker) validNonce(hash common.Hash) bool {
 
 func (maker *BlockMaker) MinnerRPC(minner common.Address,state *mpt.MPT) {
 	//设置coinbase
+
 	maker.chainConfig.coinbase = minner//设置交易
+	maker.chainConfig.Duration = 3 * time.Second//设置打包时间
 	maker.vm.Mint(minner)//奖励矿工
 	maker.NewBlock()//生成新的区块
 
