@@ -922,7 +922,7 @@ func TestTxPool_InsufficientBalance(t *testing.T) {
 	if err == nil {
 		t.Fatalf("TxPool.Execute should have failed due to insufficient balance")
 	}
-	t.Logf("[DEBUG] 交易执行失败，符合预期 - 错误: %v", err)
+	t.Logf("[DEBUG] 符合预期")
 
 	t.Logf("[Step 6] 验证余额没有变化")
 	senderAccount, err := vma.VM.GetAccount(senderAddr)

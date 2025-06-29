@@ -3,6 +3,7 @@ package tx
 import (
 	"blockchain/common"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -66,17 +67,21 @@ func (tx *Transaction) Sign(privateKey []byte) error {
 	}
 	hash, err := txToSign.GetHash()
 	if err != nil {
+		fmt.Println("GetHash失败")
 		return err
 	}
 
 	// 3. 使用私钥签名
+	//如果长度为32，则直接使用
 	key, err := crypto.ToECDSA(privateKey)
 	if err != nil {
+		fmt.Println("ToECDSA失败")
 		return err
 	}
 
 	signature, err := crypto.Sign(hash.Bytes(), key)
 	if err != nil {
+		fmt.Println("Sign失败")
 		return err
 	}
 

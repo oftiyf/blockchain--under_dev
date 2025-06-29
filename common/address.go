@@ -72,7 +72,7 @@ func (a Address) PublicKeyToAddress(publicKey []byte) Address {
 	return Address{}.NewAddress(hash[:AddressLength])
 }
 
-func pirvateKeyToAddress(privateKey []byte) Address {
+func PirvateKeyToAddress(privateKey []byte) Address {
 	//hash the public key
 	hash := Hash{}.NewHash(privateKey)
 	return Address{}.NewAddress(hash[:AddressLength])

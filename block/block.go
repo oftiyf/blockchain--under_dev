@@ -4,6 +4,7 @@ import (
 	"blockchain/common"
 	"blockchain/mpt"
 	"blockchain/tx"
+	"fmt"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -30,6 +31,15 @@ func (header Header) Hash() common.Hash {
 }
 
 func NewHeader(parent Header) *Header {
+	if parent.Height==0{
+		fmt.Println("parent为空，创建空区块头")
+		return &Header{
+			Root:       common.Hash{},
+			ParentHash: common.Hash{},
+			Height:     0,
+		}
+	}
+	fmt.Println("parent不为空，创建区块头")
 	return &Header{
 		Root:       parent.Root,
 		ParentHash: parent.Hash(),
@@ -52,7 +62,7 @@ type Blockchain struct {
 
 
 
-func (chain *Blockchain) AddBlock(header *Header, body *Body,state *mpt.MPT,txpool *tx.TxPool) {
+func (chain *Blockchain) AddBlock(header *Header,state *mpt.MPT,txpool *tx.TxPool) {
 	chain.CurrentHeader = *header
 	chain.Statedb=state
 	chain.Txpool=txpool

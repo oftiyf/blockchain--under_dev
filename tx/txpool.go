@@ -19,6 +19,11 @@ type TxPool struct {
 	Sortedboxes boxes
 }
 
+func NewTxPool(db *mpt.MPT) *TxPool {
+	return &TxPool{
+		StatDB: db,
+	}
+}
 // -------------------------------------------------------------------------------------
 // ---------------------------------对外主要方法------------------------------------------
 // -------------------------------------------------------------------------------------
@@ -94,11 +99,14 @@ func (pool *TxPool) execute_one(vm vm_execute) error {
 	return nil
 }
 func (pool *TxPool) Pop() *Transaction {
+	if len(pool.Sortedboxes) == 0 {
+		return nil
+	}
 	boxes := pool.pending[pool.Sortedboxes[0].GetAddress()]
 	if len(boxes) == 0 {
 		return nil
 	}
-
+	pool.Sortedboxes[0].Dequeue()
 	tx := boxes[0].Dequeue()
 	if len(boxes[0].txs) == 0 {
 		pool.pending[pool.Sortedboxes[0].GetAddress()] = boxes[1:]
